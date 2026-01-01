@@ -9,6 +9,11 @@
 #include "include/printf.h"
 #include "include/string.h"
 
+// 引用计数函数的前向声明
+void incref(uint64 pa);
+void decref(uint64 pa);
+int getref(uint64 pa);
+
 /*
  * the kernel's page table.
  */
@@ -371,36 +376,69 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 int
 uvmcopy(pagetable_t old, pagetable_t new, pagetable_t knew, uint64 sz)
 {
-  pte_t *pte;
+  pte_t *pte, *new_pte, *knew_pte;
   uint64 pa, i = 0, ki = 0;
   uint flags;
-  char *mem;
 
   while (i < sz){
     if((pte = walk(old, i, 0)) == NULL)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
+
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == NULL)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
-      kfree(mem);
+
+    // 对于可写页面，设置COW标志并移除写权限
+    if(flags & PTE_W) {
+      flags = (flags | PTE_COW) & ~PTE_W;
+    }
+
+    // 在子进程的用户页表中映射相同的物理页面
+    new_pte = walk(new, i, 1);
+    if(new_pte == 0) {
       goto err;
     }
+    *new_pte = PA2PTE(pa) | flags | PTE_V;
+
+    // 在子进程的内核页表中映射（内核需要写权限）
+    knew_pte = walk(knew, ki, 1);
+    if(knew_pte == 0) {
+      goto err;
+    }
+    *knew_pte = PA2PTE(pa) | (flags & ~PTE_U & ~PTE_COW) | PTE_W | PTE_V;
+
+    // 如果父进程页面是可写的，也标记为COW
+    // 我们需要更新父进程的PTE
+    if((*pte & PTE_W) && (*pte & PTE_COW) == 0) {
+      uint parent_flags = (PTE_FLAGS(*pte) | PTE_COW) & ~PTE_W;
+      *pte = PA2PTE(pa) | parent_flags | PTE_V;
+
+      // 同时更新父进程的内核页表（内核需要写权限）
+      struct proc *p = myproc();
+      if(p != 0) {
+        pte_t *kpte = walk(p->kpagetable, i, 0);
+        if(kpte != 0 && (*kpte & PTE_V)) {
+          *kpte = PA2PTE(pa) | (parent_flags & ~PTE_U & ~PTE_COW) | PTE_W | PTE_V;
+        }
+      }
+    }
+
+    // 增加这个共享页面的引用计数
+    incref(pa);
+
     i += PGSIZE;
-    if(mappages(knew, ki, PGSIZE, (uint64)mem, flags & ~PTE_U) != 0){
-      goto err;
-    }
     ki += PGSIZE;
   }
+
+  // 刷新父进程的TLB（因为我们修改了父进程的PTE）
+  sfence_vma();
+
   return 0;
 
  err:
   vmunmap(knew, 0, ki / PGSIZE, 0);
-  vmunmap(new, 0, i / PGSIZE, 1);
+  vmunmap(new, 0, i / PGSIZE, 0);  // 不要释放，它们是共享页面
   return -1;
 }
 
@@ -424,9 +462,18 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+
+    // 检查这是否是COW页面，如果需要则分配
+    pte = walk(pagetable, va0, 0);
+    if(pte != 0 && (*pte & PTE_V) && (*pte & PTE_COW)) {
+      if(cow_alloc(pagetable, va0) < 0)
+        return -1;
+    }
+
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == NULL)
       return -1;
@@ -555,6 +602,86 @@ copyinstr2(char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+// 处理写时复制页面分配
+// 当尝试写入COW页面时调用
+// 分配新页面并复制内容
+// 成功返回0，失败返回-1
+int
+cow_alloc(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa, new_pa;
+  uint flags;
+  char *new_mem;
+
+  if(va >= MAXVA)
+    return -1;
+
+  va = PGROUNDDOWN(va);
+
+  // 查找PTE
+  pte = walk(pagetable, va, 0);
+  if(pte == 0 || (*pte & PTE_V) == 0)
+    return -1;
+
+  // 检查这是否是COW页面
+  if((*pte & PTE_COW) == 0)
+    return -1;  // 不是COW页面
+
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+
+  // 分配一个新页面
+  new_mem = kalloc();
+  if(new_mem == 0)
+    return -1;
+
+  new_pa = (uint64)new_mem;
+
+  // 复制页面内容
+  memmove((void*)new_pa, (void*)pa, PGSIZE);
+
+  // 更新引用计数
+  decref(pa);
+
+  // 清除COW标志并添加写权限
+  flags = (flags | PTE_W) & ~PTE_COW;
+
+  // 在用户和内核页表中都映射新页面
+  *pte = PA2PTE(new_pa) | flags | PTE_V;
+
+  // 同时更新内核页表映射
+  // 内核页表不需要COW，直接添加写权限
+  struct proc *p = myproc();
+  if(p != 0) {
+    pte_t *kpte = walk(p->kpagetable, va, 0);
+    if(kpte != 0 && (*kpte & PTE_V)) {
+      *kpte = PA2PTE(new_pa) | (flags & ~PTE_U & ~PTE_COW) | PTE_W | PTE_V;
+    }
+  }
+
+  // 刷新TLB
+  sfence_vma();
+
+  return 0;
+}
+
+// 检查页面是否是COW页面，在写入时需要分配
+int
+is_cow_page(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+
+  if(va >= MAXVA)
+    return 0;
+
+  pte = walk(pagetable, va, 0);
+  if(pte == 0 || (*pte & PTE_V) == 0)
+    return 0;
+
+  return (*pte & PTE_COW) != 0;
 }
 
 // initialize kernel pagetable for each process.

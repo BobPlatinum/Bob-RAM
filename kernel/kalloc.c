@@ -26,12 +26,74 @@ struct {
   uint64 npage;
 } kmem;
 
+// 写时复制的页引用计数
+#define MAX_PAGE_COUNT ((PHYSTOP - KERNBASE) / PGSIZE)
+
+struct {
+  struct spinlock lock;
+  int ref_count[MAX_PAGE_COUNT];
+} page_ref;
+
+static inline int
+pa2index(uint64 pa)
+{
+  return (pa - KERNBASE) / PGSIZE;
+}
+
+static inline uint64
+index2pa(int index)
+{
+  return KERNBASE + index * PGSIZE;
+}
+
+// 增加物理页的引用计数
+void incref(uint64 pa)
+{
+  acquire(&page_ref.lock);
+  int idx = pa2index(pa);
+  if (idx >= 0 && idx < MAX_PAGE_COUNT) {
+    page_ref.ref_count[idx]++;
+  }
+  release(&page_ref.lock);
+}
+
+//减少物理页的引用计数
+void decref(uint64 pa)
+{
+  acquire(&page_ref.lock);
+  int idx = pa2index(pa);
+  if (idx >= 0 && idx < MAX_PAGE_COUNT) {
+    if (page_ref.ref_count[idx] > 0) {
+      page_ref.ref_count[idx]--;
+    }
+  }
+  release(&page_ref.lock);
+}
+
+// 获取物理页的引用计数
+int getref(uint64 pa)
+{
+  int ref = 0;
+  acquire(&page_ref.lock);
+  int idx = pa2index(pa);
+  if (idx >= 0 && idx < MAX_PAGE_COUNT) {
+    ref = page_ref.ref_count[idx];
+  }
+  release(&page_ref.lock);
+  return ref;
+}
+
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&page_ref.lock, "page_ref");
   kmem.freelist = 0;
   kmem.npage = 0;
+ // 将引用计数初始化为0
+  for (int i = 0; i < MAX_PAGE_COUNT; i++) {
+    page_ref.ref_count[i] = 0;
+  }
   freerange(kernel_end, (void*)PHYSTOP);
   #ifdef DEBUG
   printf("kernel_end: %p, phystop: %p\n", kernel_end, (void*)PHYSTOP);
@@ -56,11 +118,26 @@ void
 kfree(void *pa)
 {
   struct run *r;
-  
+
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < kernel_end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  // Fill with junk to catch dangling refs.
+// 减少引用计数，仅当计数归零时释放页面
+  acquire(&page_ref.lock);
+  int idx = pa2index((uint64)pa);
+  if (idx >= 0 && idx < MAX_PAGE_COUNT) {
+    if (page_ref.ref_count[idx] > 0) {
+      page_ref.ref_count[idx]--;
+    }
+    if (page_ref.ref_count[idx] > 0) {
+      // 页面仍被引用，暂不实际释放
+      release(&page_ref.lock);
+      return;
+    }
+  }
+  release(&page_ref.lock);
+
+  // 用随机垃圾数据填充，用来尽早暴露悬空引用（dangling refs）的错误。
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;
@@ -88,8 +165,16 @@ kalloc(void)
   }
   release(&kmem.lock);
 
-  if(r)
+  if(r) {
     memset((char*)r, 5, PGSIZE); // fill with junk
+    // 将引用计数初始化为1
+    acquire(&page_ref.lock);
+    int idx = pa2index((uint64)r);
+    if (idx >= 0 && idx < MAX_PAGE_COUNT) {
+      page_ref.ref_count[idx] = 1;
+    }
+    release(&page_ref.lock);
+  }
   return (void*)r;
 }
 
