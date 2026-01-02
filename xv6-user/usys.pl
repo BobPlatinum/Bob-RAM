@@ -43,3 +43,7 @@ entry("sysinfo");
 entry("rename");
 entry("setpriority");
 entry("getpriority");
+entry("shmget");
+entry("shmat");
+entry("shmdt");
+entry("shmctl");

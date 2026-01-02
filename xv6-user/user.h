@@ -36,6 +36,16 @@ int rename(char *old, char *new);
 int setpriority(int prio);
 int getpriority(void);
 
+// 共享内存系统调用
+#define IPC_PRIVATE  0
+#define IPC_CREAT    01000
+#define SHM_RMID     1
+
+int shmget(int key, uint64 size, int flag);
+void* shmat(int shmid, uint64 addr, int flag);
+int shmdt(uint64 addr);
+int shmctl(int shmid, int cmd, void *buf);
+
 // ulib.c
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);

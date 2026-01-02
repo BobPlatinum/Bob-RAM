@@ -16,6 +16,10 @@
 #include "include/vm.h"
 #include "include/disk.h"
 #include "include/buf.h"
+
+// 共享内存初始化函数
+void shm_init(void);
+
 #ifndef QEMU
 #include "include/sdcard.h"
 #include "include/fpioa.h"
@@ -56,6 +60,7 @@ main(unsigned long hartid, unsigned long dtb_pa)
     disk_init();
     binit();         // buffer cache
     fileinit();      // file table
+    shm_init();      // shared memory
     userinit();      // first user process
     printf("hart 0 init done\n");
     

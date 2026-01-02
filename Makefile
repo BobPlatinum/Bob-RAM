@@ -27,6 +27,7 @@ OBJS += \
   $K/trap.o \
   $K/syscall.o \
   $K/sysproc.o \
+  $K/shm.o \
   $K/bio.o \
   $K/sleeplock.o \
   $K/file.o \
@@ -206,6 +207,7 @@ UPROGS=\
 	$U/_mv\
 	$U/_cowtest\
 	$U/_priotest\
+	$U/_shmtest\
 
 	# $U/_forktest\
 	# $U/_ln\
