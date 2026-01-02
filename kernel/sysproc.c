@@ -154,3 +154,28 @@ sys_trace(void)
   myproc()->tmask = mask;
   return 0;
 }
+
+uint64
+sys_setpriority(void)
+{
+  int prio;
+  struct proc *p = myproc();
+
+  if(argint(0, &prio) < 0) {
+    return -1;
+  }
+
+  // Validate priority range
+  if(prio < 0 || prio > 100) {
+    return -1;
+  }
+
+  p->priority = prio;
+  return 0;
+}
+
+uint64
+sys_getpriority(void)
+{
+  return myproc()->priority;
+}

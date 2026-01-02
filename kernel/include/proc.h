@@ -63,7 +63,8 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct dirent *cwd;          // Current directory
   char name[16];               // Process name (debugging)
-  int tmask;                    // trace mask
+  int tmask;                   // trace mask
+  int priority;                // Process priority (0-100, higher = more important)
 };
 
 void            reg_info(void);
@@ -86,6 +87,7 @@ void            userinit(void);
 int             wait(uint64);
 void            wakeup(void*);
 void            yield(void);
+int             higher_priority_ready(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);

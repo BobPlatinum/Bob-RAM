@@ -111,8 +111,8 @@ usertrap(void)
   if(p->killed)
     exit(-1);
 
-  // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  // give up the CPU if this is a timer interrupt AND there's a higher priority process.
+  if(which_dev == 2 && higher_priority_ready())
     yield();
 
   usertrapret();
@@ -188,9 +188,9 @@ kerneltrap() {
     panic("kerneltrap");
   }
   // printf("which_dev: %d\n", which_dev);
-  
-  // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING) {
+
+  // give up the CPU if this is a timer interrupt AND there's a higher priority process.
+  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING && higher_priority_ready()) {
     yield();
   }
   // the yield() may have caused some traps to occur,

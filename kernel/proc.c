@@ -164,6 +164,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // Set default priority
+  p->priority = 50;  // Default priority (medium)
+
   return p;
 }
 
@@ -357,6 +360,9 @@ fork(void)
   // copy tracing mask from parent.
   np->tmask = p->tmask;
 
+  // copy priority from parent
+  np->priority = p->priority;
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -526,7 +532,7 @@ wait(uint64 addr)
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
+//  - choose a process to run (highest priority first).
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
@@ -534,6 +540,7 @@ void
 scheduler(void)
 {
   struct proc *p;
+  struct proc *highest_prio_proc = NULL;
   struct cpu *c = mycpu();
   extern pagetable_t kernel_pagetable;
 
@@ -541,15 +548,26 @@ scheduler(void)
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-    
+
     int found = 0;
+    int highest_priority = -1;
+
+    // First pass: find the highest priority runnable process
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
-      if(p->state == RUNNABLE) {
+      if(p->state == RUNNABLE && p->priority > highest_priority) {
+        highest_priority = p->priority;
+      }
+      release(&p->lock);
+    }
+
+    // Second pass: run the highest priority process
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE && p->priority == highest_priority) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
-        // printf("[scheduler]found runnable proc with pid: %d\n", p->pid);
         p->state = RUNNING;
         c->proc = p;
         w_satp(MAKE_SATP(p->kpagetable));
@@ -562,9 +580,12 @@ scheduler(void)
         c->proc = 0;
 
         found = 1;
+        release(&p->lock);
+        break;  // Only run one process per iteration
       }
       release(&p->lock);
     }
+
     if(found == 0) {
       intr_on();
       asm volatile("wfi");
@@ -608,6 +629,33 @@ yield(void)
   p->state = RUNNABLE;
   sched();
   release(&p->lock);
+}
+
+// Check if there's another runnable process (for time-slicing).
+// Returns 1 if yes, 0 if no.
+// Called with interrupts enabled.
+int
+higher_priority_ready(void)
+{
+  struct proc *p;
+  struct proc *cur = myproc();
+
+  if (cur == 0)
+    return 0;
+
+  // Look for any other runnable process
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p == cur)
+      continue;  // Skip current process
+    acquire(&p->lock);
+    if(p->state == RUNNABLE) {
+      release(&p->lock);
+      return 1;  // Found another runnable process
+    }
+    release(&p->lock);
+  }
+
+  return 0;  // No other runnable process
 }
 
 // A fork child's very first scheduling by scheduler()
