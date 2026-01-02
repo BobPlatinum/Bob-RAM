@@ -1,0 +1,916 @@
+## 改进方案：请求分页式（Demand Paging）堆内存“延迟分配”（Lazy Allocation）
+
+改进目标：把当前 `sbrk()` 的“立刻分配+立刻映射”改成**只增长虚拟地址空间（sz）但暂不分配物理页**；当进程第一次访问该页触发缺页异常（page fault）时，再由内核分配物理页、清零并映射。
+这属于《汤小丹》第四版范围内的**请求分页存储管理模式**：用缺页中断驱动按需装入；对这个内核（QEMU 8MB、PHYSTOP 小）会有非常显著的效果：**大 `sbrk()` 立即变快、内存占用显著下降、支持稀疏大数组**。MIT xv6 的“lazy page allocation”实验就是同类做法。 ([MIT CSAIL][1])
+
+下面按你要求给出：
+
+1. `内存管理修改说明1.md`（完整内容）
+2. 需要改动的 kernel 文件与**替换后的完整函数/代码块**（可直接复制替换到对应文件）
+3. xv6-user 新增测试文件（完整）
+4. 修改后的 Makefile（完整）
+
+---
+
+# 1) 内存管理修改说明1.md（完整内容）
+
+```md
+# 内存管理修改说明1：请求分页式堆内存延迟分配（Lazy Allocation）
+
+## 0. 背景与动机
+当前内核中，用户态通过 sbrk(n) 扩展堆空间时，会在内核里立即：
+- kalloc 分配物理页
+- 在用户页表 pagetable 中映射
+- 并在该项目中，还会在进程内核页表 kpagetable 中同步映射
+
+问题：
+- 对大 n（例如几十 MB、上百 MB）会产生大量页分配与页表操作，耗时明显；
+- 很多程序会“先要一大块地址空间但只用其中少量”（稀疏数组/提前预留），导致物理内存被浪费；
+- 本项目 QEMU 默认内存小、PHYSTOP 更小，导致大 sbrk 直接失败，影响可用性。
+
+## 1. 改进点（对应《汤小丹》范围）
+采用 请求分页（Demand Paging）思想实现“延迟分配”：
+- sbrk(n) 只调整进程逻辑大小 myproc()->sz，不立即分配物理页；
+- 访问未映射页时触发缺页异常（page fault），由内核缺页处理程序分配物理页并映射。
+
+这属于请求分页存储管理模式：缺页中断 → 分配/装入 → 更新页表 → 重新执行指令。
+
+说明：本次改进不引入“页面置换/换出到磁盘”，但为后续加入 CLOCK/FIFO/LRU 等置换算法与工作集控制留下接口位置。
+
+## 2. 设计约束（与现有内核结构对齐）
+本项目与标准 xv6 的关键不同：
+- 每进程存在 kpagetable（内核态运行时使用），并把用户页也同步映射进 kpagetable，便于 copyin2/copyout2 直接 memmove。
+因此：缺页时必须把新页同时映射到：
+- p->pagetable（用户态）
+- p->kpagetable（内核态）
+
+## 3. 关键行为定义
+### 3.1 sbrk(n)
+- n > 0：仅 p->sz += n，返回 oldsz
+- n < 0：调用 uvmdealloc(pagetable, kpagetable, oldsz, oldsz+n) 释放已映射页；未映射页也应允许“跳过”
+- 若 newsz 超过 MAXUVA 或溢出，返回 -1
+
+### 3.2 缺页处理（usertrap）
+当 scause 为 13/15（load/store page fault）且：
+- va < p->sz 且 va < MAXUVA：
+  - 若是 COW 页：走 cow_alloc()
+  - 否则：走 lazy_alloc()，分配新页并映射
+- 否则：非法访问，kill 进程
+
+### 3.3 系统调用读写用户缓冲区
+典型情形：进程 sbrk 得到一段地址，但尚未触发缺页；随后把这段地址传给 read()/write()/pipe 等系统调用。
+要求：内核 copyout/copyin/copyinstr（以及本项目的 copyout2/copyin2/copyinstr2）在遇到未映射页时，必须：
+- 若地址在 p->sz 范围内：先 lazy_alloc 再继续拷贝
+- 否则：失败返回 -1
+
+### 3.4 fork/uvmcopy 与 COW 的协同
+uvmcopy 必须允许父进程地址空间中存在“尚未映射的页”（lazy 空洞）：
+- 若 walk 找不到 pte 或 pte 无效：跳过（子进程也保持未映射）
+- 若是有效页：按原逻辑映射，并对可写页设置 COW 标记、清除写位、增加 refcount
+
+### 3.5 vmunmap/uvmunmap 行为
+释放虚拟地址区间时：
+- 如果某页根本没映射（lazy 空洞），不应 panic，直接跳过即可
+
+## 4. 涉及文件与改动概览
+### kernel/sysproc.c
+- 修改 sys_sbrk：去掉对 growproc 的正向分配，保留负向 uvmdealloc
+
+### kernel/trap.c
+- 在 usertrap 中新增：缺页异常 → COW 或 lazy_alloc
+- 地址越界或 OOM → kill
+
+### kernel/vm.c
+- 新增 lazy_alloc(pagetable, kpagetable, va)
+- 修改 vmunmap：未映射页不 panic
+- 修改 uvmcopy：跳过未映射页
+- 修改 copyout/copyin/copyinstr：遇到未映射页且在 sz 内 → lazy_alloc
+- 修改 copyout2/copyin2/copyinstr2：不要直接 memmove；改成调用 copyout/copyin/copyinstr（从而自动支持 lazy/COW）
+
+### xv6-user/lazytest.c（新增）
+- 覆盖：大 sbrk 不触碰也能成功；远端页首次触碰触发缺页；read 写入未触碰页；fork 下未映射页语义；负 sbrk 收缩不崩溃
+
+### Makefile
+- UPROGS 增加 $U/_lazytest
+
+## 5. 预期收益（显著效果）
+- 大 sbrk 从“分配几十万页”变成 O(1) 调整 sz，延迟到真正访问时再分配；
+- 物理内存占用与实际触碰页数一致，支持稀疏大地址空间；
+- fork 在父进程存在大量“未触碰页”的情况下更轻量（uvmcopy 直接跳过）。
+
+## 6. 风险与回归策略
+风险点：
+- copyout2/copyin2 若仍直接 memmove，会在内核态访问未映射页导致内核 trap/panic；
+- vmunmap 若仍对未映射页 panic，负 sbrk 或进程退出释放会崩。
+回归：
+- 恢复 sys_sbrk 使用 growproc 的旧实现；
+- 去掉 lazy_alloc 分支。
+
+## 7. 验证方式
+- make run（QEMU）
+- 在 shell 中运行：
+  - lazytest
+  - cowtest
+  - usertests
+均应 PASS。
+```
+
+---
+
+# 2) Kernel 代码改动（按文件给出“替换后的完整代码块”）
+
+> 说明：以下都按你项目现有签名（`uvmalloc(pagetable,kpagetable,...)`、`uvmcopy(old,new,knew,sz)`、COW/refcount）来写；复制时按“替换/新增位置”操作即可。
+
+---
+
+## 2.1 `kernel/sysproc.c` —— 替换 `sys_sbrk()`
+
+把你现有的 `sys_sbrk()` **整个函数替换**为：
+
+```c
+uint64
+sys_sbrk(void)
+{
+  int n;
+  if(argint(0, &n) < 0)
+    return (uint64)-1;
+
+  struct proc *p = myproc();
+  uint64 oldsz = p->sz;
+
+  if(n == 0)
+    return oldsz;
+
+  // 防溢出/越界（MAXUVA 在 memlayout.h 中）
+  if(n > 0){
+    uint64 newsz = oldsz + (uint64)n;
+    if(newsz < oldsz || newsz > MAXUVA)
+      return (uint64)-1;
+    // 关键：不分配物理页，只扩大“逻辑大小”
+    p->sz = newsz;
+    return oldsz;
+  } else {
+    // 收缩：需要真正解除映射并回收物理页（已映射的那部分）
+    uint64 newsz = oldsz + (int64)n;
+    if((int64)newsz < 0)
+      return (uint64)-1;
+    p->sz = uvmdealloc(p->pagetable, p->kpagetable, oldsz, newsz);
+    return oldsz;
+  }
+}
+```
+
+---
+
+## 2.2 `kernel/trap.c` —— 在 `usertrap()` 中增加 Lazy Allocation 分支
+
+### (A) 在 trap.c 顶部（include 后）新增函数原型声明
+
+```c
+int lazy_alloc(pagetable_t pagetable, pagetable_t kpagetable, uint64 va);
+```
+
+### (B) 在 `usertrap()` 里处理 scause==13/15
+
+参考 RISC-V 特权架构：`scause=13` 表示 Load page fault，`scause=15` 表示 Store/AMO page fault。
+
+在你的 `usertrap()` 中，找到类似这一段：
+
+```c
+else if(r_scause() == 13 || r_scause() == 15){
+  ...
+}
+```
+
+把该分支**替换为下面完整代码块**（保持你原有的 COW 逻辑优先）：
+
+```c
+else if(r_scause() == 13 || r_scause() == 15){
+  uint64 va = r_stval();
+
+  // 越界：访问未通过 sbrk/exec 分配的地址 -> kill
+  if(va >= p->sz || va >= MAXUVA){
+    p->killed = 1;
+  } else if(is_cow_page(p->pagetable, va)){
+    // COW：写入共享页触发复制
+    if(cow_alloc(p->pagetable, va) < 0){
+      p->killed = 1;
+    }
+  } else {
+    // Lazy allocation：首次访问未映射页 -> 分配并映射到 user+kernel 页表
+    if(lazy_alloc(p->pagetable, p->kpagetable, va) < 0){
+      // OOM 或映射失败
+      p->killed = 1;
+    }
+  }
+}
+```
+
+---
+
+## 2.3 `kernel/vm.c` —— 新增 `lazy_alloc()` 并修改 vmunmap/uvmcopy/copyin/out
+
+### (A) 在 vm.c 顶部（合适位置）新增 `lazy_alloc()`（完整函数）
+
+```c
+int
+lazy_alloc(pagetable_t pagetable, pagetable_t kpagetable, uint64 va)
+{
+  if(va >= MAXUVA)
+    return -1;
+
+  uint64 a = PGROUNDDOWN(va);
+
+  // 已映射则直接成功
+  pte_t *pte = walk(pagetable, a, 0);
+  if(pte && (*pte & PTE_V))
+    return 0;
+
+  char *mem = kalloc();
+  if(mem == 0)
+    return -1;
+
+  memset(mem, 0, PGSIZE);
+
+  // 与你现有 uvmalloc 行为保持一致（若你堆页不该 X，可把 PTE_X 去掉）
+  int perm = PTE_R | PTE_W | PTE_X | PTE_U;
+
+  if(mappages(pagetable, a, PGSIZE, (uint64)mem, perm) != 0){
+    kfree(mem);
+    return -1;
+  }
+
+  if(mappages(kpagetable, a, PGSIZE, (uint64)mem, perm) != 0){
+    // 回滚 user pagetable 映射
+    vmunmap(pagetable, a, 1, 0);
+    kfree(mem);
+    return -1;
+  }
+
+  // 刷新当前（内核态）TLB
+  sfence_vma();
+  return 0;
+}
+```
+
+---
+
+### (B) 修改 `vmunmap()`：允许“未映射页”直接跳过（不 panic）
+
+找到你 vm.c 里的 `vmunmap(pagetable, va, npages, do_free)`，将其核心循环改成下面这种“容错版”。
+**替换整个函数**为：
+
+```c
+void
+vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+{
+  if((va % PGSIZE) != 0)
+    panic("vmunmap: not aligned");
+
+  for(uint64 a = va; a < va + npages*PGSIZE; a += PGSIZE){
+    pte_t *pte = walk(pagetable, a, 0);
+    if(pte == 0)
+      continue;                 // lazy 空洞：页表路径都不存在
+    if((*pte & PTE_V) == 0)
+      continue;                 // lazy 空洞：pte 无效
+
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("vmunmap: not a leaf");
+
+    if(do_free){
+      uint64 pa = PTE2PA(*pte);
+      kfree((void*)pa);
+    }
+    *pte = 0;
+  }
+}
+```
+
+---
+
+### (C) 修改 `uvmcopy()`：跳过未映射页（lazy 空洞），其余保持 COW/refcount
+
+找到 `uvmcopy(old, new, knew, sz)`，把 for 循环主体替换为下面版本（完整函数更稳；你可整体替换 uvmcopy）：
+
+```c
+int
+uvmcopy(pagetable_t old, pagetable_t new, pagetable_t knew, uint64 sz)
+{
+  for(uint64 i = 0; i < sz; i += PGSIZE){
+    pte_t *pte = walk(old, i, 0);
+    if(pte == 0)
+      continue;                   // lazy 空洞
+    if((*pte & PTE_V) == 0)
+      continue;                   // lazy 空洞
+
+    uint64 pa = PTE2PA(*pte);
+    uint flags = PTE_FLAGS(*pte);
+
+    // 对可写页启用 COW：子进程映射同一物理页，双方清写位、置 COW
+    if(flags & PTE_W){
+      flags = (flags | PTE_COW) & ~PTE_W;
+
+      if((*pte & PTE_COW) == 0){
+        uint parent_flags = (PTE_FLAGS(*pte) | PTE_COW) & ~PTE_W;
+        *pte = PA2PTE(pa) | parent_flags | PTE_V;
+      }
+    }
+
+    if(mappages(new, i, PGSIZE, pa, flags | PTE_U) != 0)
+      goto err;
+    if(mappages(knew, i, PGSIZE, pa, flags | PTE_U) != 0)
+      goto err;
+
+    incref(pa);
+  }
+
+  sfence_vma();
+  return 0;
+
+err:
+  // 释放已建立的映射（do_free=1 交给 kfree/refcount）
+  vmunmap(new, 0, PGROUNDUP(sz)/PGSIZE, 1);
+  vmunmap(knew, 0, PGROUNDUP(sz)/PGSIZE, 0); // knew 的物理页由 new 那侧 kfree/refcount 处理
+  return -1;
+}
+```
+
+---
+
+### (D) 修改 `copyout/copyin/copyinstr`：遇到未映射页且地址在 sz 内 -> lazy_alloc
+
+#### 1) `copyout()`
+
+找到 `copyout(pagetable, dstva, src, len)`，在 `walkaddr()` 失败处加入 lazy。建议按下面完整版本替换（保留你原 COW 分支）：
+
+```c
+int
+copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+{
+  struct proc *p = myproc();
+  uint64 n, va0, pa0;
+
+  while(len > 0){
+    va0 = PGROUNDDOWN(dstva);
+
+    // 先处理 COW：内核写用户页也可能触发复制
+    pte_t *pte = walk(pagetable, va0, 0);
+    if(pte != 0 && (*pte & PTE_V) && (*pte & PTE_COW)){
+      if(cow_alloc(pagetable, va0) < 0)
+        return -1;
+    }
+
+    pa0 = walkaddr(pagetable, va0);
+    if(pa0 == 0){
+      // 若目标地址在进程逻辑大小内，则尝试 lazy 分配
+      if(va0 < p->sz){
+        if(lazy_alloc(p->pagetable, p->kpagetable, va0) < 0)
+          return -1;
+        pa0 = walkaddr(pagetable, va0);
+      }
+      if(pa0 == 0)
+        return -1;
+    }
+
+    n = PGSIZE - (dstva - va0);
+    if(n > len)
+      n = len;
+
+    memmove((void *)(pa0 + (dstva - va0)), src, n);
+
+    len -= n;
+    src += n;
+    dstva = va0 + PGSIZE;
+  }
+  return 0;
+}
+```
+
+#### 2) `copyin()`
+
+```c
+int
+copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+{
+  struct proc *p = myproc();
+  uint64 n, va0, pa0;
+
+  while(len > 0){
+    va0 = PGROUNDDOWN(srcva);
+    pa0 = walkaddr(pagetable, va0);
+    if(pa0 == 0){
+      if(va0 < p->sz){
+        if(lazy_alloc(p->pagetable, p->kpagetable, va0) < 0)
+          return -1;
+        pa0 = walkaddr(pagetable, va0);
+      }
+      if(pa0 == 0)
+        return -1;
+    }
+
+    n = PGSIZE - (srcva - va0);
+    if(n > len)
+      n = len;
+
+    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+
+    len -= n;
+    dst += n;
+    srcva = va0 + PGSIZE;
+  }
+  return 0;
+}
+```
+
+#### 3) `copyinstr()`
+
+```c
+int
+copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
+{
+  struct proc *p = myproc();
+  uint64 n, va0, pa0;
+  int got_null = 0;
+
+  while(got_null == 0 && max > 0){
+    va0 = PGROUNDDOWN(srcva);
+    pa0 = walkaddr(pagetable, va0);
+    if(pa0 == 0){
+      if(va0 < p->sz){
+        if(lazy_alloc(p->pagetable, p->kpagetable, va0) < 0)
+          return -1;
+        pa0 = walkaddr(pagetable, va0);
+      }
+      if(pa0 == 0)
+        return -1;
+    }
+
+    n = PGSIZE - (srcva - va0);
+    if(n > max)
+      n = max;
+
+    char *p0 = (char *)(pa0 + (srcva - va0));
+    for(uint64 i = 0; i < n; i++){
+      dst[i] = p0[i];
+      if(p0[i] == '\0'){
+        got_null = 1;
+        break;
+      }
+    }
+
+    if(got_null){
+      return 0;
+    }
+
+    max -= n;
+    dst += n;
+    srcva = va0 + PGSIZE;
+  }
+  return -1;
+}
+```
+
+---
+
+### (E) 修改 `copyout2/copyin2/copyinstr2`：禁止直接 memmove（否则内核态会踩到未映射页）
+
+把这三个函数改为**直接调用**上面的 `copyout/copyin/copyinstr`，从而自动支持 lazy/COW：
+
+```c
+int
+copyout2(uint64 dstva, void *src, uint64 len)
+{
+  struct proc *p = myproc();
+  if(p == 0)
+    return -1;
+  if(dstva >= p->sz || dstva + len > p->sz)
+    return -1;
+  return copyout(p->pagetable, dstva, (char*)src, len);
+}
+
+int
+copyin2(void *dst, uint64 srcva, uint64 len)
+{
+  struct proc *p = myproc();
+  if(p == 0)
+    return -1;
+  if(srcva >= p->sz || srcva + len > p->sz)
+    return -1;
+  return copyin(p->pagetable, (char*)dst, srcva, len);
+}
+
+int
+copyinstr2(char *dst, uint64 srcva, uint64 max)
+{
+  struct proc *p = myproc();
+  if(p == 0)
+    return -1;
+  if(srcva >= p->sz)
+    return -1;
+  return copyinstr(p->pagetable, dst, srcva, max);
+}
+```
+
+---
+
+# 3) 测试文件（xv6-user 里给全套）：新增 `xv6-user/lazytest.c`
+
+```c
+#include "kernel/include/types.h"
+#include "xv6-user/user.h"
+
+#define PGSIZE 4096
+
+static void
+fail(const char *msg)
+{
+  printf("lazytest FAIL: %s\n", msg);
+  exit(1);
+}
+
+static void
+test_big_sparse_sbrk()
+{
+  printf("[1] big sparse sbrk...\n");
+
+  int big = 64 * 1024 * 1024; // 64MB
+  char *base = sbrk(big);
+  if(base == (char*)-1)
+    fail("sbrk(64MB) failed (should succeed with lazy alloc)");
+
+  // 只触碰两页：第一页和最后一页（中间应保持未映射）
+  base[0] = 'A';
+  base[big - 1] = 'Z';
+  if(base[0] != 'A' || base[big - 1] != 'Z')
+    fail("touching sparse pages produced wrong values");
+
+  printf("    OK\n");
+}
+
+static void
+test_read_into_lazy_page()
+{
+  printf("[2] read() into never-touched page...\n");
+
+  char *buf = sbrk(PGSIZE);
+  if(buf == (char*)-1)
+    fail("sbrk(PGSIZE) failed");
+
+  // 不触碰 buf，直接让内核 read() 写入它
+  int fds[2];
+  if(pipe(fds) < 0)
+    fail("pipe failed");
+
+  const char *msg = "hello_lazy";
+  if(write(fds[1], msg, 10) != 10)
+    fail("pipe write failed");
+
+  if(read(fds[0], buf, 10) != 10)
+    fail("pipe read failed");
+
+  if(memcmp(buf, msg, 10) != 0)
+    fail("read content mismatch (copyout/lazy handling broken)");
+
+  close(fds[0]);
+  close(fds[1]);
+
+  printf("    OK\n");
+}
+
+static void
+test_fork_unmapped_semantics()
+{
+  printf("[3] fork with unmapped lazy page...\n");
+
+  char *p = sbrk(PGSIZE);
+  if(p == (char*)-1)
+    fail("sbrk(PGSIZE) failed");
+
+  // 不触碰 p：此时页应未映射，fork 后父子都未映射
+  int pid = fork();
+  if(pid < 0)
+    fail("fork failed");
+
+  if(pid == 0){
+    // 子进程首次写入，应触发缺页分配并成功
+    p[0] = 'C';
+    if(p[0] != 'C')
+      fail("child write after lazy fault failed");
+    exit(0);
+  }
+
+  wait(0);
+
+  // 父进程此时第一次读，会触发分配并应为 0（因为 demand-zero）
+  if(p[0] != 0)
+    fail("parent saw child's data; unmapped lazy page should not be shared");
+
+  printf("    OK\n");
+}
+
+static void
+test_negative_sbrk_unmap()
+{
+  printf("[4] negative sbrk unmap without panic...\n");
+
+  char *p = sbrk(8 * PGSIZE);
+  if(p == (char*)-1)
+    fail("sbrk(8 pages) failed");
+
+  // 只触碰一页，其他页保持 lazy 空洞
+  p[0] = 1;
+
+  // 收缩回去，要求 vmunmap 不因“未映射页” panic
+  char *q = sbrk(-8 * PGSIZE);
+  if(q == (char*)-1)
+    fail("negative sbrk failed");
+
+  printf("    OK\n");
+}
+
+int
+main(void)
+{
+  printf("lazytest starting\n");
+
+  test_big_sparse_sbrk();
+  test_read_into_lazy_page();
+  test_fork_unmapped_semantics();
+  test_negative_sbrk_unmap();
+
+  printf("lazytest PASS\n");
+  exit(0);
+}
+```
+
+---
+
+# 4) 修改后的 Makefile（完整）
+
+你给的 Makefile 基础上，只做一处：`UPROGS` 增加 `$U/_lazytest\`。下面是**完整 Makefile**（已插入该项）：
+
+```makefile
+# platform	:= k210
+platform	:= qemu
+# mode := debug
+mode := release
+K=kernel
+U=xv6-user
+T=target
+
+OBJS =
+ifeq ($(platform), k210)
+OBJS += $K/entry_k210.o
+else
+OBJS += $K/entry_qemu.o
+endif
+
+OBJS += \
+  $K/printf.o \
+  $K/kalloc.o \
+  $K/intr.o \
+  $K/spinlock.o \
+  $K/string.o \
+  $K/main.o \
+  $K/vm.o \
+  $K/proc.o \
+  $K/swtch.o \
+  $K/trampoline.o \
+  $K/trap.o \
+  $K/syscall.o \
+  $K/sysproc.o \
+  $K/bio.o \
+  $K/sleeplock.o \
+  $K/file.o \
+  $K/pipe.o \
+  $K/exec.o \
+  $K/sysfile.o \
+  $K/kernelvec.o \
+  $K/timer.o \
+  $K/disk.o \
+  $K/fat32.o \
+  $K/plic.o \
+  $K/console.o
+
+ifeq ($(platform), k210)
+OBJS += \
+  $K/spi.o \
+  $K/gpiohs.o \
+  $K/fpioa.o \
+  $K/utils.o \
+  $K/sdcard.o \
+  $K/dmac.o \
+  $K/sysctl.o \
+
+else
+OBJS += \
+  $K/virtio_disk.o \
+  $K/uart.o \
+
+endif
+
+QEMU = qemu-system-riscv64
+
+ifeq ($(platform), k210)
+RUSTSBI = ./bootloader/SBI/sbi-k210
+else
+RUSTSBI = ./bootloader/SBI/sbi-qemu
+endif
+
+# TOOLPREFIX	:= riscv64-unknown-elf-
+TOOLPREFIX	:= riscv64-linux-gnu-
+CC = $(TOOLPREFIX)gcc
+AS = $(TOOLPREFIX)gas
+LD = $(TOOLPREFIX)ld
+OBJCOPY = $(TOOLPREFIX)objcopy
+OBJDUMP = $(TOOLPREFIX)objdump
+
+CFLAGS = -Wall -O -fno-omit-frame-pointer -ggdb -g
+CFLAGS += -MD
+CFLAGS += -mcmodel=medany
+CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
+CFLAGS += -I.
+CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+
+ifeq ($(mode), debug)
+CFLAGS += -DDEBUG
+endif
+
+ifeq ($(platform), qemu)
+CFLAGS += -D QEMU
+endif
+
+LDFLAGS = -z max-page-size=4096
+
+ifeq ($(platform), k210)
+linker = ./linker/k210.ld
+endif
+
+ifeq ($(platform), qemu)
+linker = ./linker/qemu.ld
+endif
+
+# Compile Kernel
+$T/kernel: $(OBJS) $(linker) $U/initcode
+	@if [ ! -d "./target" ]; then mkdir target; fi
+	@$(LD) $(LDFLAGS) -T $(linker) -o $T/kernel $(OBJS)
+	@$(OBJDUMP) -S $T/kernel > $T/kernel.asm
+	@$(OBJDUMP) -t $T/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $T/kernel.sym
+
+build: $T/kernel userprogs
+
+# Compile RustSBI
+RUSTSBI:
+ifeq ($(platform), k210)
+	@cd ./bootloader/SBI/rustsbi-k210 && cargo build && cp ./target/riscv64gc-unknown-none-elf/debug/rustsbi-k210 ../sbi-k210
+	@$(OBJDUMP) -S ./bootloader/SBI/sbi-k210 > $T/rustsbi-k210.asm
+else
+	@cd ./bootloader/SBI/rustsbi-qemu && cargo build && cp ./target/riscv64gc-unknown-none-elf/debug/rustsbi-qemu ../sbi-qemu
+	@$(OBJDUMP) -S ./bootloader/SBI/sbi-qemu > $T/rustsbi-qemu.asm
+endif
+
+rustsbi-clean:
+	@cd ./bootloader/SBI/rustsbi-k210 && cargo clean
+	@cd ./bootloader/SBI/rustsbi-qemu && cargo clean
+
+image = $T/kernel.bin
+k210 = $T/k210.bin
+k210-serialport := /dev/ttyUSB0
+
+ifndef CPUS
+CPUS := 1
+endif
+
+QEMUOPTS = -machine virt -kernel $T/kernel -m 8M -nographic
+
+# use multi-core
+QEMUOPTS += -smp $(CPUS)
+
+QEMUOPTS += -bios default
+
+# import virtual disk image
+QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
+QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+
+run: build
+ifeq ($(platform), k210)
+	@$(OBJCOPY) $T/kernel --strip-all -O binary $(image)
+	@$(OBJCOPY) $(RUSTSBI) --strip-all -O binary $(k210)
+	@dd if=$(image) of=$(k210) bs=128k seek=1
+	@$(OBJDUMP) -D -b binary -m riscv $(k210) > $T/k210.asm
+	@sudo chmod 777 $(k210-serialport)
+	@python3 ./tools/kflash.py -p $(k210-serialport) -b 1500000 -t $(k210)
+else
+	@$(QEMU) $(QEMUOPTS)
+endif
+
+$U/initcode: $U/initcode.S
+	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I. -Ikernel -c $U/initcode.S -o $U/initcode.o
+	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o $U/initcode.out $U/initcode.o
+	$(OBJCOPY) -S -O binary $U/initcode.out $U/initcode
+	$(OBJDUMP) -S $U/initcode.o > $U/initcode.asm
+
+tags: $(OBJS) _init
+	@etags *.S *.c
+
+ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o
+
+_%: %.o $(ULIB)
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+	$(OBJDUMP) -S $@ > $*.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
+
+$U/usys.S : $U/usys.pl
+	@perl $U/usys.pl > $U/usys.S
+
+$U/usys.o : $U/usys.S
+	$(CC) $(CFLAGS) -c -o $U/usys.o $U/usys.S
+
+$U/_forktest: $U/forktest.o $(ULIB)
+	# forktest has less library code linked in - needs to be small
+	# in order to be able to max out the proc table.
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_forktest $U/forktest.o $U/ulib.o $U/usys.o
+	$(OBJDUMP) -S $U/_forktest > $U/forktest.asm
+
+.PRECIOUS: %.o
+
+UPROGS=\
+	$U/_init\
+	$U/_sh\
+	$U/_cat\
+	$U/_echo\
+	$U/_grep\
+	$U/_ls\
+	$U/_kill\
+	$U/_mkdir\
+	$U/_xargs\
+	$U/_sleep\
+	$U/_find\
+	$U/_rm\
+	$U/_wc\
+	$U/_test\
+	$U/_usertests\
+	$U/_strace\
+	$U/_mv\
+	$U/_cowtest\
+	$U/_priotest\
+	$U/_lazytest\
+
+userprogs: $(UPROGS)
+
+dst=/mnt
+
+fs: $(UPROGS)
+	@if [ ! -f "fs.img" ]; then \
+		echo "making fs image..."; \
+		dd if=/dev/zero of=fs.img bs=512k count=512; \
+		mkfs.vfat -F 32 fs.img; fi
+	@sudo mount fs.img $(dst)
+	@if [ ! -d "$(dst)/bin" ]; then sudo mkdir $(dst)/bin; fi
+	@sudo cp README $(dst)/README
+	@for file in $$( ls $U/_* ); do \
+		sudo cp $$file $(dst)/$${file#$U/_};\
+		sudo cp $$file $(dst)/bin/$${file#$U/_}; done
+	@sudo umount $(dst)
+
+sdcard: userprogs
+	@if [ ! -d "$(dst)/bin" ]; then sudo mkdir $(dst)/bin; fi
+	@for file in $$( ls $U/_* ); do \
+		sudo cp $$file $(dst)/bin/$${file#$U/_}; done
+	@sudo cp $U/_init $(dst)/init
+	@sudo cp $U/_sh $(dst)/sh
+	@sudo cp README $(dst)/README
+
+clean:
+	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
+	*/*.o */*.d */*.asm */*.sym \
+	$T/* \
+	$U/initcode $U/initcode.out \
+	$K/kernel \
+	.gdbinit \
+	$U/usys.S \
+	$(UPROGS)
+```
+
+---
+
+## 你改完后如何验证
+
+1. `make clean && make run`
+2. 在 shell 里依次跑：
+
+* `lazytest`
+* `cowtest`
+* `usertests`
+
+如果 `lazytest` 的 `[1] big sparse sbrk...` 能在你的 8MB/PHYSTOP 很小的环境下通过，就说明“显著效果”已经兑现：以前这一步大概率会因物理页不足直接失败或明显变慢。
+
+---
+
+## 关键依据（你论文/报告里可直接引用的事实点）
+
+* `scause==13/15` 对应 load/store page fault（缺页异常分类）来自 RISC-V 特权架构规范。
+* “sbrk 只增大 sz，首次访问触发 page fault 再分配映射”的 lazy allocation 机制与修改点（trap.c/vm.c/sysproc.c）在 xv6 体系里有明确范式。 ([MIT CSAIL][1])
+* 请求分页的核心流程（PTE invalid → page fault → OS handler → 更新 PTE → retry）属于 demand paging 经典机制。
+
+[1]: https://pdos.csail.mit.edu/6.S081/2020/labs/lazy.html "Lab: xv6 lazy page allocation"
