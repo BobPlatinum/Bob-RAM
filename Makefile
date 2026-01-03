@@ -206,6 +206,7 @@ UPROGS=\
 	$U/_mv\
 	$U/_cowtest\
 	$U/_priotest\
+	$U/_lazytest\
 
 	# $U/_forktest\
 	# $U/_ln\
