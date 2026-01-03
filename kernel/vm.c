@@ -559,12 +559,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyin2(void *dst, uint64 srcva, uint64 len)
 {
-  struct proc *p = myproc();
-  if(p == 0)
-    return -1;
-  if(srcva >= p->sz || srcva + len > p->sz)
-    return -1;
-  return copyin(p->pagetable, (char*)dst, srcva, len);
+  return copyin(myproc()->pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
