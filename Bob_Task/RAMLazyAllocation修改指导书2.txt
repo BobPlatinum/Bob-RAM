@@ -1,0 +1,265 @@
+下面按“**修改点前/后对比**”给你，都是可直接定位到函数的最小改动块（不贴整文件）。
+
+> 说明：RISC-V 同步异常里 **scause=13 是 Load page fault，scause=15 是 Store/AMO page fault**。([mirror.iscas.ac.cn][1])
+
+---
+
+## 1) `kernel/sysproc.c`：`sys_sbrk()` 改成只改 `sz`（正增长不分配）
+
+**Before**
+
+```c
+uint64
+sys_sbrk(void)
+{
+  int n;
+  if(argint(0, &n) < 0)
+    return -1;
+  uint64 addr = myproc()->sz;
+  if(growproc(n) < 0)
+    return -1;
+  return addr;
+}
+```
+
+**After**
+
+```c
+uint64
+sys_sbrk(void)
+{
+  int n;
+  struct proc *p = myproc();
+
+  if(argint(0, &n) < 0)
+    return -1;
+
+  uint64 addr = p->sz;
+
+  if(n < 0){
+    if(growproc(n) < 0)
+      return -1;
+  } else if(n > 0){
+    // lazy allocation: 只扩虚拟大小，不立刻分配物理页
+    p->sz += n;
+  }
+  return addr;
+}
+```
+
+---
+
+## 2) `kernel/defs.h`：加 `lazy_alloc()` 声明（给 `trap.c` 用）
+
+**Before**（无）
+
+```c
+// ...
+```
+
+**After**
+
+```c
+// vm.c
+int lazy_alloc(pagetable_t pagetable, uint64 va);
+```
+
+---
+
+## 3) `kernel/trap.c`：`usertrap()` 里处理 scause=13/15 的缺页（先 COW，后 lazy）
+
+把下面这段插入到你现有的 `usertrap()` “设备中断 devintr”之后、“默认 kill”之前。
+如果你已经有 COW 的 `is_cow_page/cowalloc` 分支，保持它在前面（写 fault 优先走 COW）。
+
+**Before（典型结构）**
+
+```c
+} else if((which_dev = devintr()) != 0){
+  // ...
+} else if(r_scause() == 15 && is_cow_page(p->pagetable, r_stval())){
+  if(cowalloc(p->pagetable, r_stval()) < 0)
+    setkilled(p);
+} else {
+  // unexpected
+  setkilled(p);
+}
+```
+
+**After**
+
+```c
+} else if((which_dev = devintr()) != 0){
+  // ...
+} else if(r_scause() == 15 && is_cow_page(p->pagetable, r_stval())){
+  // 先处理 COW（写 fault）
+  if(cowalloc(p->pagetable, r_stval()) < 0)
+    setkilled(p);
+
+} else if(r_scause() == 13 || r_scause() == 15){
+  // 再处理 lazy allocation 的缺页：13=load page fault, 15=store/AMO page fault :contentReference[oaicite:1]{index=1}
+  uint64 va = r_stval();
+
+  // 只允许：va < p->sz（堆/数据段范围内）或在栈页范围内；否则杀进程
+  if(va >= p->sz || va < p->trapframe->sp - PGSIZE){
+    setkilled(p);
+  } else if(lazy_alloc(p->pagetable, va) < 0){
+    setkilled(p);
+  }
+
+} else {
+  // unexpected
+  setkilled(p);
+}
+```
+
+---
+
+## 4) `kernel/vm.c`：新增 `lazy_alloc()`（缺页时分配并映射 1 页）
+
+找个合适位置（比如 `uvm*` 附近）新增函数即可。
+
+**新增（After only）**
+
+```c
+int
+lazy_alloc(pagetable_t pagetable, uint64 va)
+{
+  va = PGROUNDDOWN(va);
+
+  char *mem = kalloc();
+  if(mem == 0)
+    return -1;
+
+  memset(mem, 0, PGSIZE);
+
+  // 堆/栈页：默认给 U/R/W（不加 X）
+  if(mappages(pagetable, va, PGSIZE, (uint64)mem, PTE_R | PTE_W | PTE_U) != 0){
+    kfree(mem);
+    return -1;
+  }
+  return 0;
+}
+```
+
+---
+
+## 5) `kernel/vm.c`：`vmunmap()` 允许“洞”（遇到未映射页直接跳过）
+
+**Before（会 panic）**
+
+```c
+pte_t *pte = walk(pagetable, a, 0);
+if(pte == 0)
+  panic("vmunmap: walk");
+if((*pte & PTE_V) == 0)
+  panic("vmunmap: not mapped");
+if(PTE_FLAGS(*pte) == PTE_V)
+  panic("vmunmap: not a leaf");
+```
+
+**After（跳过未映射）**
+
+```c
+pte_t *pte = walk(pagetable, a, 0);
+if(pte == 0)
+  continue;
+if((*pte & PTE_V) == 0)
+  continue;
+if(PTE_FLAGS(*pte) == PTE_V)
+  panic("vmunmap: not a leaf");
+```
+
+---
+
+## 6) `kernel/vm.c`：`uvmcopy()` 允许“洞”（父进程没映射就不拷贝该页）
+
+**Before（会 panic）**
+
+```c
+pte_t *pte = walk(old, i, 0);
+if(pte == 0)
+  panic("uvmcopy: pte should exist");
+if((*pte & PTE_V) == 0)
+  panic("uvmcopy: page not present");
+```
+
+**After**
+
+```c
+pte_t *pte = walk(old, i, 0);
+if(pte == 0)
+  continue;
+if((*pte & PTE_V) == 0)
+  continue;
+```
+
+---
+
+## 7) `kernel/vm.c`：`copyout/copyin/copyinstr` 遇到未映射页时，先 lazy 分配再继续
+
+你只要在每轮循环里、拿 `walkaddr()` 之前加一段“如果 pa==0 就 lazy_alloc 再走一遍”。
+
+### 7.1 `copyout()`（写用户内存，COW 的话你原逻辑保持不变，只加 lazy 部分）
+
+**Before（核心片段）**
+
+```c
+va0 = PGROUNDDOWN(dstva);
+pa0 = walkaddr(pagetable, va0);
+if(pa0 == 0)
+  return -1;
+```
+
+**After**
+
+```c
+va0 = PGROUNDDOWN(dstva);
+pa0 = walkaddr(pagetable, va0);
+if(pa0 == 0){
+  // lazy: 先补一页再写
+  if(lazy_alloc(pagetable, va0) < 0)
+    return -1;
+  pa0 = walkaddr(pagetable, va0);
+  if(pa0 == 0)
+    return -1;
+}
+```
+
+### 7.2 `copyin()`（读用户内存）
+
+**Before**
+
+```c
+va0 = PGROUNDDOWN(srcva);
+pa0 = walkaddr(pagetable, va0);
+if(pa0 == 0)
+  return -1;
+```
+
+**After**
+
+```c
+va0 = PGROUNDDOWN(srcva);
+pa0 = walkaddr(pagetable, va0);
+if(pa0 == 0){
+  if(lazy_alloc(pagetable, va0) < 0)
+    return -1;
+  pa0 = walkaddr(pagetable, va0);
+  if(pa0 == 0)
+    return -1;
+}
+```
+
+### 7.3 `copyinstr()`（读用户字符串）
+
+同样在取 `walkaddr()` 后加 lazy 补页即可（和 `copyin()` 一样的改法）。
+
+---
+
+### 兼容提示（避免你被函数名卡住）
+
+* 如果你工程里没有 `copyin/copyout/copyinstr`，而是 `copyin2/copyout2/copyinstr2`，**按同样位置加同样块**：在每次计算 `va0` 后、访问 PTE/PA 前先判断“未映射就 lazy_alloc”。
+
+以上就是“最小可粘贴”的改动块。你把这些块分别丢给 AI agent 做局部替换就行。
+
+[1]: https://mirror.iscas.ac.cn/riscv-toolchains/release/riscv/riscv-isa-manual/Release%20riscv-isa-release-5953d84-2025-05-27/riscv-privileged.pdf "The RISC-V Instruction Set Manual: Volume II: Privileged Architecture"

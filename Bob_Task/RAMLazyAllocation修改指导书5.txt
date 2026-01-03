@@ -1,0 +1,375 @@
+你说的我还没改，只是把run.bash改成了：make clean
+make fs
+make run。再进行编译，出现结果：platinum@WangBo:/mnt/d/Coding/ClionCode/Bob-RAM$ ./run.bash
+rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
+*/*.o */*.d */*.asm */*.sym \
+target/* \
+xv6-user/initcode xv6-user/initcode.out \
+kernel/kernel \
+.gdbinit \
+xv6-user/usys.S \
+xv6-user/_init xv6-user/_sh xv6-user/_cat xv6-user/_echo xv6-user/_grep xv6-user/_ls xv6-user/_kill xv6-user/_mkdir xv6-user/_xargs xv6-user/_sleep xv6-user/_find xv6-user/_rm xv6-user/_wc xv6-user/_test xv6-user/_usertests xv6-user/_strace xv6-user/_mv xv6-user/_cowtest xv6-user/_priotest xv6-user/_lazytest
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/ulib.o xv6-user/ulib.c
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU -c -o xv6-user/usys.o xv6-user/usys.S
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/printf.o xv6-user/printf.c
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/umalloc.o xv6-user/umalloc.c
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/init.o xv6-user/init.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_init xv6-user/init.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_init has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_init > xv6-user/init.asm
+riscv64-linux-gnu-objdump -t xv6-user/_init | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/init.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/sh.o xv6-user/sh.c
+xv6-user/sh.c: In function ‘runcmd’:
+xv6-user/sh.c:157:1: warning: infinite recursion detected [-Winfinite-recursion]
+  157 | runcmd(struct cmd *cmd)
+      | ^~~~~~
+xv6-user/sh.c:205:5: note: recursive call
+  205 |     runcmd(rcmd->cmd);
+      |     ^~~~~~~~~~~~~~~~~
+xv6-user/sh.c:225:7: note: recursive call
+  225 |       runcmd(pcmd->left);
+      |       ^~~~~~~~~~~~~~~~~~
+xv6-user/sh.c:232:7: note: recursive call
+  232 |       runcmd(pcmd->right);
+      |       ^~~~~~~~~~~~~~~~~~~
+xv6-user/sh.c:211:7: note: recursive call
+  211 |       runcmd(lcmd->left);
+      |       ^~~~~~~~~~~~~~~~~~
+xv6-user/sh.c:213:5: note: recursive call
+  213 |     runcmd(lcmd->right);
+      |     ^~~~~~~~~~~~~~~~~~~
+xv6-user/sh.c:243:7: note: recursive call
+  243 |       runcmd(bcmd->cmd);
+      |       ^~~~~~~~~~~~~~~~~
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_sh xv6-user/sh.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_sh has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_sh > xv6-user/sh.asm
+riscv64-linux-gnu-objdump -t xv6-user/_sh | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/sh.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/cat.o xv6-user/cat.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_cat xv6-user/cat.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_cat has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_cat > xv6-user/cat.asm
+riscv64-linux-gnu-objdump -t xv6-user/_cat | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/cat.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/echo.o xv6-user/echo.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_echo xv6-user/echo.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_echo has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_echo > xv6-user/echo.asm
+riscv64-linux-gnu-objdump -t xv6-user/_echo | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/echo.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/grep.o xv6-user/grep.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_grep xv6-user/grep.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_grep has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_grep > xv6-user/grep.asm
+riscv64-linux-gnu-objdump -t xv6-user/_grep | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/grep.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/ls.o xv6-user/ls.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_ls xv6-user/ls.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_ls has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_ls > xv6-user/ls.asm
+riscv64-linux-gnu-objdump -t xv6-user/_ls | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/ls.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/kill.o xv6-user/kill.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_kill xv6-user/kill.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_kill has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_kill > xv6-user/kill.asm
+riscv64-linux-gnu-objdump -t xv6-user/_kill | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/kill.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/mkdir.o xv6-user/mkdir.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_mkdir xv6-user/mkdir.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_mkdir has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_mkdir > xv6-user/mkdir.asm
+riscv64-linux-gnu-objdump -t xv6-user/_mkdir | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/mkdir.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/xargs.o xv6-user/xargs.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_xargs xv6-user/xargs.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_xargs has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_xargs > xv6-user/xargs.asm
+riscv64-linux-gnu-objdump -t xv6-user/_xargs | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/xargs.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/sleep.o xv6-user/sleep.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_sleep xv6-user/sleep.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_sleep has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_sleep > xv6-user/sleep.asm
+riscv64-linux-gnu-objdump -t xv6-user/_sleep | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/sleep.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/find.o xv6-user/find.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_find xv6-user/find.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_find has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_find > xv6-user/find.asm
+riscv64-linux-gnu-objdump -t xv6-user/_find | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/find.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/rm.o xv6-user/rm.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_rm xv6-user/rm.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_rm has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_rm > xv6-user/rm.asm
+riscv64-linux-gnu-objdump -t xv6-user/_rm | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/rm.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/wc.o xv6-user/wc.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_wc xv6-user/wc.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_wc has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_wc > xv6-user/wc.asm
+riscv64-linux-gnu-objdump -t xv6-user/_wc | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/wc.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/test.o xv6-user/test.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_test xv6-user/test.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_test has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_test > xv6-user/test.asm
+riscv64-linux-gnu-objdump -t xv6-user/_test | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/test.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/usertests.o xv6-user/usertests.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_usertests xv6-user/usertests.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_usertests has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_usertests > xv6-user/usertests.asm
+riscv64-linux-gnu-objdump -t xv6-user/_usertests | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/usertests.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/strace.o xv6-user/strace.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_strace xv6-user/strace.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_strace has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_strace > xv6-user/strace.asm
+riscv64-linux-gnu-objdump -t xv6-user/_strace | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/strace.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/mv.o xv6-user/mv.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_mv xv6-user/mv.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_mv has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_mv > xv6-user/mv.asm
+riscv64-linux-gnu-objdump -t xv6-user/_mv | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/mv.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/cowtest.o xv6-user/cowtest.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_cowtest xv6-user/cowtest.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_cowtest has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_cowtest > xv6-user/cowtest.asm
+riscv64-linux-gnu-objdump -t xv6-user/_cowtest | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/cowtest.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/priotest.o xv6-user/priotest.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_priotest xv6-user/priotest.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_priotest has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_priotest > xv6-user/priotest.asm
+riscv64-linux-gnu-objdump -t xv6-user/_priotest | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/priotest.sym
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o xv6-user/lazytest.o xv6-user/lazytest.c
+riscv64-linux-gnu-ld -z max-page-size=4096 -N -e main -Ttext 0 -o xv6-user/_lazytest xv6-user/lazytest.o xv6-user/ulib.o xv6-user/usys.o xv6-user/printf.o xv6-user/umalloc.o
+riscv64-linux-gnu-ld: warning: xv6-user/_lazytest has a LOAD segment with RWX permissions
+riscv64-linux-gnu-objdump -S xv6-user/_lazytest > xv6-user/lazytest.asm
+riscv64-linux-gnu-objdump -t xv6-user/_lazytest | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$/d' > xv6-user/lazytest.sym
+making fs image...
+512+0 records in
+512+0 records out
+268435456 bytes (268 MB, 256 MiB) copied, 3.84623 s, 69.8 MB/s
+mkfs.fat 4.2 (2021-01-31)
+[sudo] password for platinum:
+riscv64-linux-gnu-gcc    -c -o kernel/entry_qemu.o kernel/entry_qemu.S
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o kernel/printf.o kernel/printf.c
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o kernel/kalloc.o kernel/kalloc.c
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o kernel/intr.o kernel/intr.c
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o kernel/spinlock.o kernel/spinlock.c
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o kernel/string.o kernel/string.c
+riscv64-linux-gnu-gcc -Wall -O -fno-omit-frame-pointer -ggdb -g -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -D QEMU   -c -o kernel/main.o kernel/main.c
+In file included from kernel/main.c:17:
+kernel/include/vm.h:14:17: error: conflicting types for ‘uvminit’; have ‘void(uint64 *, uint64 *, uchar *, uint)’ {aka ‘void(long unsigned int *, long unsigned int *, unsigned char *, unsigned int)’}
+   14 | void            uvminit(pagetable_t, pagetable_t, uchar *, uint);
+      |                 ^~~~~~~
+In file included from kernel/main.c:16:
+kernel/include/defs.h:203:17: note: previous declaration of ‘uvminit’ with type ‘void(uint64 *, uchar *, uint)’ {aka ‘void(long unsigned int *, unsigned char *, unsigned int)’}
+  203 | void            uvminit(pagetable_t, uchar *, uint);
+      |                 ^~~~~~~
+kernel/include/vm.h:15:17: error: conflicting types for ‘uvmalloc’; have ‘uint64(uint64 *, uint64 *, uint64,  uint64)’ {aka ‘long unsigned int(long unsigned int *, long unsigned int *, long unsigned int,  long unsigned int)’}
+   15 | uint64          uvmalloc(pagetable_t, pagetable_t, uint64, uint64);
+      |                 ^~~~~~~~
+kernel/include/defs.h:204:17: note: previous declaration of ‘uvmalloc’ with type ‘uint64(uint64 *, uint64,  uint64)’ {aka ‘long unsigned int(long unsigned int *, long unsigned int,  long unsigned int)’}
+  204 | uint64          uvmalloc(pagetable_t, uint64, uint64);
+      |                 ^~~~~~~~
+kernel/include/vm.h:18:17: error: conflicting types for ‘uvmcopy’; have ‘int(uint64 *, uint64 *, uint64 *, uint64)’ {aka ‘int(long unsigned int *, long unsigned int *, long unsigned int *, long unsigned int)’}
+   18 | int             uvmcopy(pagetable_t, pagetable_t, pagetable_t, uint64);
+      |                 ^~~~~~~
+kernel/include/defs.h:206:17: note: previous declaration of ‘uvmcopy’ with type ‘int(uint64 *, uint64 *, uint64)’ {aka ‘int(long unsigned int *, long unsigned int *, long unsigned int)’}
+  206 | int             uvmcopy(pagetable_t, pagetable_t, uint64);
+      |                 ^~~~~~~
+make: *** [<builtin>: kernel/main.o] Error 1
+
+AI回答：报错和你改不改 `run.bash` 没关系；这是**头文件里同一个函数被声明成了两种签名**，编译器直接判定“类型冲突（conflicting types）”。在 C 里：**声明/定义/再次声明必须一模一样**，否则就会报你这种错误。 ([Stack Overflow][1])
+
+下面按“**只给修改前后对比**”给出可落地的修复（先把编译卡点打通），以及你 AI agent 提到的 4 个问题对应怎么改。
+
+---
+
+## 0）先修当前卡住的编译错误：`uvminit/uvmalloc/uvmcopy` 签名冲突
+
+**原因**：你在 `kernel/include/vm.h` 里把函数签名改成带 `kpagetable` 版本了，但 `kernel/include/defs.h` 里还是老版本，所以 `main.c` 同时 include 两个头就冲突。
+
+### 修改：`kernel/include/defs.h`
+
+找到 `uvminit/uvmalloc/uvmcopy` 那几行（你日志里是 defs.h:203~206），按下面对齐到 `vm.h` 的新签名。
+
+```diff
+--- a/kernel/include/defs.h
++++ b/kernel/include/defs.h
+@@
+-void            uvminit(pagetable_t, uchar *, uint);
+-uint64          uvmalloc(pagetable_t, uint64, uint64);
+-int             uvmcopy(pagetable_t, pagetable_t, uint64);
++void            uvminit(pagetable_t, pagetable_t, uchar *, uint);
++uint64          uvmalloc(pagetable_t, pagetable_t, uint64, uint64);
++int             uvmcopy(pagetable_t, pagetable_t, pagetable_t, uint64);
+```
+
+> 做完这一步后，你大概率会进入下一阶段报错：“调用处参数不够”（因为签名变了），这属于正常推进。
+
+---
+
+## 1）你之前日志里还会遇到：`copyout2/copyin2` 类型冲突（提前一次性修掉）
+
+你之前的报错是：`vm.h` 声明用 `char *`，但 `vm.c` 定义用 `void *`，所以冲突。
+
+### 选一种改法（推荐改头文件更通用）：`kernel/include/vm.h`
+
+```diff
+--- a/kernel/include/vm.h
++++ b/kernel/include/vm.h
+@@
+-int             copyout2(uint64 dstva, char *src, uint64 len);
+-int             copyin2(char *dst, uint64 srcva, uint64 len);
++int             copyout2(uint64 dstva, void *src, uint64 len);
++int             copyin2(void *dst, uint64 srcva, uint64 len);
+```
+
+（或者反过来把 `vm.c` 里的 `void *` 改成 `char *`，二选一，关键是两边一致。）
+
+---
+
+## 2）把“隐式声明”警告干掉：给 `cow_alloc/lazy_alloc/uvmunmap` 补原型
+
+你之前日志里有：
+
+* `implicit declaration of function 'cow_alloc'`
+* `implicit declaration of function 'lazy_alloc'`
+* `implicit declaration of function 'uvmunmap'`
+
+这说明**在第一次使用前没看到原型**（或者原型被你删了/放错头文件了）。
+
+### 修改：`kernel/include/vm.h`（没有就加上；有但签名不一致也要对齐）
+
+```diff
+--- a/kernel/include/vm.h
++++ b/kernel/include/vm.h
+@@
++int             cow_alloc(pagetable_t pagetable, uint64 va);
++int             lazy_alloc(pagetable_t pagetable, pagetable_t kpagetable, uint64 va);
++void            uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free);
+```
+
+---
+
+## 3）AI agent 建议 ①：`lazy_alloc` 必须带 `kpagetable`（你现在就是在往这条路走）
+
+你需要保证三件事一致：
+
+* 头文件声明（`vm.h`/`defs.h`）
+* 函数定义（`vm.c`）
+* 所有调用点（trap/copyin/copyout 等）
+
+### 修改：`kernel/vm.c`（函数定义签名对齐）
+
+```diff
+--- a/kernel/vm.c
++++ b/kernel/vm.c
+@@
+-int lazy_alloc(pagetable_t pagetable, uint64 va)
++int lazy_alloc(pagetable_t pagetable, pagetable_t kpagetable, uint64 va)
+ {
+     ...
+ }
+```
+
+### 修改：所有调用点（你日志里已经有一处是 2 参数了，其他地方也要对齐）
+
+示例（以你日志里 `copyout` 那段为例，保持一致即可）：
+
+```diff
+--- a/kernel/vm.c
++++ b/kernel/vm.c
+@@
+-        if(lazy_alloc(p->pagetable, va0) < 0)
++        if(lazy_alloc(p->pagetable, p->kpagetable, va0) < 0)
+           return -1;
+```
+
+---
+
+## 4）AI agent 建议 ②：`sys_sbrk()` 加溢出 + `MAXUVA` 边界检查
+
+你做惰性分配时，`sbrk(n)` 可能只改 `p->sz` 不实际分配页，但**边界一定要守住**。
+
+### 修改：`kernel/sysproc.c`（或你项目里放 sbrk 的文件）
+
+```diff
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@
+ sys_sbrk(void)
+ {
+-  int n;
+-  if(argint(0, &n) < 0)
++  int n;
++  if(argint(0, &n) < 0)
+     return -1;
+-  uint64 addr = myproc()->sz;
+-  if(growproc(n) < 0)
+-    return -1;
+-  return addr;
++
++  struct proc *p = myproc();
++  uint64 oldsz = p->sz;
++  uint64 newsz;
++
++  if(n > 0){
++    newsz = oldsz + (uint64)n;
++    if(newsz < oldsz)          // overflow
++      return -1;
++    if(newsz > MAXUVA)
++      return -1;
++  } else {
++    newsz = oldsz + (int64)n;  // shrink
++  }
++
++  // 惰性分配：只改 sz（若你仍用 growproc，则把 growproc 内的实际分配逻辑改成惰性）
++  p->sz = newsz;
++  return oldsz;
+ }
+```
+
+> 你如果目前仍然调用 `growproc(n)`，那就需要把 `growproc` 改成：增长时只更新 `sz`，缩小时再实际 unmap/free。
+
+---
+
+## 5）AI agent 建议 ③：缺页处理顺序：先 COW，再 lazy
+
+页故障里应该优先处理“写时复制”这种**已映射但只读+COW**的情况；lazy 是“根本没映射”的情况。
+
+### 修改：`kernel/trap.c`（或你项目里的 usertrap）
+
+下面只展示关键顺序（你要把它嵌进现有 page fault 分支里）：
+
+```diff
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@
+-  // page fault handling ...
+-  if(lazy_alloc(p->pagetable, p->kpagetable, va) < 0)
+-    p->killed = 1;
++  // page fault handling ...
++  if(cow_alloc(p->pagetable, va) == 0){
++    // COW handled
++  } else if(lazy_alloc(p->pagetable, p->kpagetable, va) == 0){
++    // lazy handled
++  } else {
++    p->killed = 1;
++  }
+```
+
+> `cow_alloc/lazy_alloc` 的返回值你项目里可能是 `<0` 表示失败、`0` 表示成功；按你实际实现把条件改成一致即可，核心是**顺序**。
+
+---
+
+## 6）你之前出现过 `./run.bash: cannot execute: required file not found`（如果再遇到）
+
+这通常是脚本换行是 Windows 的 CRLF（WSL 里会被当成“找不到解释器”一类问题）。处理方式是把脚本转成 LF。 ([Ask Ubuntu][2])
+（你这次已经能跑起来了，就当应急预案。）
+
+---
+
+## 建议你现在的执行顺序（最省时间）
+
+1. 先改 **defs.h 那 3 行**（第 0 节）→ 解决当前卡死
+2. 立刻补上 **copyin2/copyout2 原型一致**（第 1 节）
+3. 补齐 **cow_alloc/lazy_alloc/uvmunmap 原型**（第 2 节）
+4. 重新 `make clean && make run`
+5. 若出现“参数不够”的报错，再按第 3/5 节去改调用点（这一步是必然的）
+
+如果你下一次编译把“**第一个新的报错块**”贴出来（不用全贴，贴从 `error:` 开始到下一段 `make: ***`），我可以继续按“前后对比 diff”给你把下一轮改动精确定位。
+
+[1]: https://stackoverflow.com/questions/10200061/conflicting-types-and-previous-declaration-of-function?utm_source=chatgpt.com "c - Conflicting types and previous declaration of function? - Stack ..."
+[2]: https://askubuntu.com/questions/966488/how-do-i-fix-r-command-not-found-errors-running-bash-scripts-in-wsl?utm_source=chatgpt.com "How do I fix \"$'\r': command not found\" errors running Bash scripts in WSL?"
