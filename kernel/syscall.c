@@ -118,6 +118,12 @@ extern uint64 sys_sysinfo(void);
 extern uint64 sys_rename(void);
 extern uint64 sys_setpriority(void);
 extern uint64 sys_getpriority(void);
+extern uint64 sys_shmget(void);
+extern uint64 sys_shmat(void);
+extern uint64 sys_shmdt(void);
+extern uint64 sys_shmctl(void);
+extern uint64 sys_getqueuelevel(void);
+extern uint64 sys_gettimeslice(void);
 
 static uint64 (*syscalls[])(void) = {
   [SYS_fork]        sys_fork,
@@ -148,6 +154,12 @@ static uint64 (*syscalls[])(void) = {
   [SYS_rename]      sys_rename,
   [SYS_setpriority] sys_setpriority,
   [SYS_getpriority] sys_getpriority,
+  [SYS_shmget]      sys_shmget,
+  [SYS_shmat]       sys_shmat,
+  [SYS_shmdt]       sys_shmdt,
+  [SYS_shmctl]      sys_shmctl,
+  [SYS_getqueuelevel] sys_getqueuelevel,
+  [SYS_gettimeslice]  sys_gettimeslice,
 };
 
 static char *sysnames[] = {
@@ -179,6 +191,12 @@ static char *sysnames[] = {
   [SYS_rename]      "rename",
   [SYS_setpriority] "setpriority",
   [SYS_getpriority] "getpriority",
+  [SYS_shmget]      "shmget",
+  [SYS_shmat]       "shmat",
+  [SYS_shmdt]       "shmdt",
+  [SYS_shmctl]      "shmctl",
+  [SYS_getqueuelevel] "getqueuelevel",
+  [SYS_gettimeslice]  "gettimeslice",
 };
 
 void
@@ -229,4 +247,69 @@ sys_sysinfo(void)
   }
 
   return 0;
+}
+
+// 共享内存系统调用包装函数
+extern int do_shmget(int key, uint64 size, int flag);
+extern void* do_shmat(int shmid, uint64 addr, int flag);
+extern int do_shmdt(uint64 addr);
+extern int do_shmctl(int shmid, int cmd, void *buf);
+
+uint64
+sys_shmget(void)
+{
+  int key, flag;
+  uint64 size;
+
+  if(argint(0, &key) < 0)
+    return -1;
+  if(argaddr(1, &size) < 0)
+    return -1;
+  if(argint(2, &flag) < 0)
+    return -1;
+
+  return do_shmget(key, size, flag);
+}
+
+uint64
+sys_shmat(void)
+{
+  int shmid, flag;
+  uint64 addr;
+
+  if(argint(0, &shmid) < 0)
+    return -1;
+  if(argaddr(1, &addr) < 0)
+    return -1;
+  if(argint(2, &flag) < 0)
+    return -1;
+
+  return (uint64)do_shmat(shmid, addr, flag);
+}
+
+uint64
+sys_shmdt(void)
+{
+  uint64 addr;
+
+  if(argaddr(0, &addr) < 0)
+    return -1;
+
+  return do_shmdt(addr);
+}
+
+uint64
+sys_shmctl(void)
+{
+  int shmid, cmd;
+  uint64 buf;
+
+  if(argint(0, &shmid) < 0)
+    return -1;
+  if(argint(1, &cmd) < 0)
+    return -1;
+  if(argaddr(2, &buf) < 0)
+    return -1;
+
+  return do_shmctl(shmid, cmd, (void*)buf);
 }
