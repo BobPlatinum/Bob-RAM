@@ -13,6 +13,7 @@
 #include "include/trap.h"
 #include "include/proc.h"
 #include "include/plic.h"
+#include "include/defs.h"
 #include "include/vm.h"
 #include "include/disk.h"
 #include "include/buf.h"
